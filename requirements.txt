@@ -1,0 +1,8 @@
+flask
+geopandas
+python-dotenv
+requests
+flexpolyline
+google-maps-services-python
+polyline
+googlemaps

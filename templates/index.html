@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Road Network Route Comparison</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.8.2/mapbox-gl.css" rel="stylesheet" />
+    <!-- Mapbox Draw -->
+    <link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.3.0/mapbox-gl-draw.css" type="text/css" />
+    <style>
+        body, html { height: 100%; margin: 0; padding: 0; }
+        #map { height: 100%; }
+        .sidebar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 350px;
+            background-color: white;
+            overflow-y: auto;
+            padding: 20px;
+            z-index: 1000;
+        }
+        #map-container { position: absolute; top: 0; left: 350px; right: 0; bottom: 0; }
+        #output-log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: .25rem;
+            height: 200px;
+            overflow-y: scroll;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 0.8em;
+        }
+    </style>
+</head>
+<body>
+
+<div class="sidebar">
+    <h1 class="h4">Route Comparison</h1>
+    <hr>
+
+    <div class="mb-3">
+        <label for="country-select" class="form-label">Select Area</label>
+        <select id="country-select" class="form-select">
+            <option value="stuttgart">Germany (Stuttgart)</option>
+            <option value="dubai">UAE (Dubai)</option>
+            <option value="bangkok">Thailand (Bangkok)</option>
+        </select>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Bounding Box</label>
+        <button id="draw-bbox-btn" class="btn btn-secondary btn-sm mb-2">Draw on Map</button>
+        <div class="row g-2">
+            <div class="col-6"><input type="number" step="any" class="form-control" id="min-lon" placeholder="Min Lon"></div>
+            <div class="col-6"><input type="number" step="any" class="form-control" id="min-lat" placeholder="Min Lat"></div>
+            <div class="col-6"><input type="number" step="any" class="form-control" id="max-lon" placeholder="Max Lon"></div>
+            <div class="col-6"><input type="number" step="any" class="form-control" id="max-lat" placeholder="Max Lat"></div>
+        </div>
+        <button id="update-bbox-btn" class="btn btn-outline-secondary btn-sm mt-2">Update from Inputs</button>
+    </div>
+
+    <hr>
+
+    <div class="mb-3">
+        <label for="routing-strategy" class="form-label">Routing Strategy</label>
+        <select id="routing-strategy" class="form-select">
+            <option value="fastest">Fastest (considers traffic)</option>
+            <option value="shortest" selected>Shortest (network-based)</option>
+        </select>
+    </div>
+
+    <button id="compare-btn" class="btn btn-primary w-100 mb-3">Compare Routes</button>
+
+    <div class="mb-3">
+        <label for="route-select" class="form-label">Select Route Pair</label>
+        <select id="route-select" class="form-select" disabled>
+            <option value="all">Show All</option>
+        </select>
+    </div>
+    
+    <h5>Display Options</h5>
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="google-routes-checkbox" checked><label class="form-check-label">Google Routes</label>
+    </div>
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="here-routes-checkbox" checked><label class="form-check-label">HERE Routes</label>
+    </div>
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="osm-routes-checkbox" checked><label class="form-check-label">OSM Routes</label>
+    </div>
+
+    <hr>
+    <h5>Statistics</h5>
+    <div id="stats">Click on a route to see details.</div>
+
+    <hr>
+    <h5>Log</h5>
+    <pre id="output-log"></pre>
+</div>
+
+<div id="map-container">
+    <div id="map"></div>
+</div>
+
+<div id="legend" class="p-2 bg-white rounded shadow-sm" style="position: absolute; top: 10px; right: 10px; z-index: 1000;">
+    <h6 class="mb-2">Route Legend</h6>
+    <div class="d-flex align-items-center mb-1">
+        <span style="display: inline-block; width: 20px; height: 10px; background-color: #7627F5; margin-right: 5px;"></span>
+        <span>Google Routes</span>
+    </div>
+    <div class="d-flex align-items-center mb-1">
+        <span style="display: inline-block; width: 20px; height: 10px; background-color: #42B8B2; margin-right: 5px;"></span>
+        <span>HERE Routes</span>
+    </div>
+    <div class="d-flex align-items-center">
+        <span style="display: inline-block; width: 20px; height: 10px; background-color: #FF9A2E; margin-right: 5px;"></span>
+        <span>OSM Routes</span>
+    </div>
+</div>
+
+<script src="https://api.mapbox.com/mapbox-gl-js/v2.8.2/mapbox-gl.js"></script>
+<script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.3.0/mapbox-gl-draw.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    mapboxgl.accessToken = '{{ mapbox_token }}';
+    const map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/streets-v11',
+        center: [9.15, 48.83],
+        zoom: 12
+    });
+
+    const modes = MapboxDraw.modes;
+    modes.draw_rectangle = MapboxDraw.modes.draw_polygon;
+
+    const draw = new MapboxDraw({
+        displayControlsDefault: false,
+        controls: {
+            polygon: true, // This must be true to enable rectangle drawing mode, even if the button is hidden.
+            trash: true
+        },
+        modes: modes,
+        defaultMode: 'simple_select'
+    });
+    map.addControl(draw);
+
+    // --- State and Config ---
+    let BBOX = [9.10, 48.78, 9.20, 48.88]; // Default: Stuttgart
+    const NUM_ROUTES = 5;
+    let statsData = {};
+
+    const locations = {
+        'stuttgart': {
+            center: [9.15, 48.83],
+            zoom: 12,
+            bbox: [9.10, 48.78, 9.20, 48.88]
+        },
+        'dubai': {
+            center: [55.3, 25.2],
+            zoom: 11,
+            bbox: [55.1, 25.05, 55.5, 25.35]
+        },
+        'bangkok': {
+            center: [100.52, 13.75],
+            zoom: 11,
+            bbox: [100.4, 13.65, 100.7, 13.85]
+        }
+    };
+
+    map.on('load', () => {
+        // Add bounding box layer
+        map.addSource('bbox', {
+            'type': 'geojson',
+            'data': {
+                'type': 'Feature',
+                'geometry': {
+                    'type': 'Polygon',
+                    'coordinates': []
+                }
+            }
+        });
+        map.addLayer({
+            'id': 'bbox-layer',
+            'type': 'line',
+            'source': 'bbox',
+            'layout': {},
+            'paint': {
+                'line-color': '#088',
+                'line-dasharray': [2, 2]
+            }
+        });
+
+        // Initial draw of the BBOX after the source has been added
+        updateBbox(BBOX);
+    });
+
+    // --- Event Listeners ---
+
+    document.getElementById('country-select').addEventListener('change', (e) => {
+        const selected = e.target.value;
+        const location = locations[selected];
+        if (location) {
+            map.flyTo({
+                center: location.center,
+                zoom: location.zoom
+            });
+            updateBbox(location.bbox);
+        }
+    });
+
+    document.getElementById('draw-bbox-btn').addEventListener('click', () => {
+        draw.changeMode('draw_rectangle');
+    });
+
+    document.getElementById('update-bbox-btn').addEventListener('click', () => {
+        const minLon = parseFloat(document.getElementById('min-lon').value);
+        const minLat = parseFloat(document.getElementById('min-lat').value);
+        const maxLon = parseFloat(document.getElementById('max-lon').value);
+        const maxLat = parseFloat(document.getElementById('max-lat').value);
+        if (!isNaN(minLon) && !isNaN(minLat) && !isNaN(maxLon) && !isNaN(maxLat)) {
+            updateBbox([minLon, minLat, maxLon, maxLat]);
+        } else {
+            alert('Please enter valid numbers for all bounding box coordinates.');
+        }
+    });
+
+    map.on('draw.create', (e) => {
+        const feature = e.features[0];
+        const coords = feature.geometry.coordinates[0];
+        const lons = coords.map(p => p[0]);
+        const lats = coords.map(p => p[1]);
+        const newBbox = [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
+        updateBbox(newBbox);
+        // Clear the drawing and return to simple_select mode to prevent errors on redraw.
+        draw.deleteAll();
+        draw.changeMode('simple_select');
+    });
+
+    document.getElementById('compare-btn').addEventListener('click', () => {
+        const log = document.getElementById('output-log');
+        log.textContent = 'Starting route comparison...\n';
+        document.getElementById('compare-btn').disabled = true;
+        document.getElementById('route-select').disabled = true;
+        
+        const strategy = document.getElementById('routing-strategy').value;
+
+        fetch('/compare', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            // Send both bbox and strategy to the backend
+            body: JSON.stringify({ bbox: BBOX, strategy: strategy }),
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    const eventSource = new EventSource('/progress');
+                    eventSource.onmessage = function(event) {
+                        log.textContent += event.data;
+                        log.scrollTop = log.scrollHeight;
+                        if (event.data.includes("Route processing complete.")) {
+                            eventSource.close();
+                            log.textContent += '\nComparison finished. Loading layers...\n';
+                            populateRouteSelect();
+                            loadRouteLayers();
+                            loadStats();
+                            document.getElementById('compare-btn').disabled = false;
+                            document.getElementById('route-select').disabled = false;
+                            log.textContent += 'Layers loaded.\n';
+                        }
+                    };
+                    eventSource.onerror = function(err) {
+                        console.error("EventSource failed:", err);
+                        eventSource.close();
+                        document.getElementById('compare-btn').disabled = false;
+                        document.getElementById('route-select').disabled = false;
+                    };
+                } else {
+                    log.textContent += `Error: ${data.output}\n`;
+                    document.getElementById('compare-btn').disabled = false;
+                }
+            });
+    });
+
+    function updateBbox(newBbox) {
+        BBOX = newBbox;
+        
+        // Update input fields
+        document.getElementById('min-lon').value = BBOX[0].toFixed(6);
+        document.getElementById('min-lat').value = BBOX[1].toFixed(6);
+        document.getElementById('max-lon').value = BBOX[2].toFixed(6);
+        document.getElementById('max-lat').value = BBOX[3].toFixed(6);
+
+        // Update map layer
+        const bboxPolygon = {
+            'type': 'Feature',
+            'geometry': {
+                'type': 'Polygon',
+                'coordinates': [[
+                    [BBOX[0], BBOX[1]], [BBOX[2], BBOX[1]],
+                    [BBOX[2], BBOX[3]], [BBOX[0], BBOX[3]],
+                    [BBOX[0], BBOX[1]]
+                ]]
+            }
+        };
+        map.getSource('bbox').setData(bboxPolygon);
+    }
+
+    function populateRouteSelect() {
+        const select = document.getElementById('route-select');
+        select.innerHTML = '<option value="all">Show All</option>';
+        for (let i = 0; i < NUM_ROUTES; i++) {
+            const option = document.createElement('option');
+            option.value = i;
+            option.textContent = `Route Pair ${i + 1}`;
+            select.appendChild(option);
+        }
+    }
+
+    function loadStats() {
+        fetch('/data/stats.json')
+            .then(response => response.json())
+            .then(data => {
+                statsData = data;
+                updateStats('all'); // Show initial stats for all
+            });
+    }
+
+    function updateStats(routeId) {
+        const statsDiv = document.getElementById('stats');
+        if (routeId === 'all' || !statsData[routeId]) {
+            statsDiv.innerHTML = 'Select a route pair to see details.';
+        } else {
+            const stats = statsData[routeId];
+            const formatDistance = (meters) => meters ? `${(meters / 1000).toFixed(2)} km` : 'N/A';
+            const formatDuration = (seconds) => {
+                if (!seconds) return 'N/A';
+                const h = Math.floor(seconds / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                return `${h > 0 ? h + 'h ' : ''}${m}m`;
+            };
+
+            const formatInstructions = (instructions) => {
+                if (!instructions || instructions.length === 0) {
+                    return '<li>No instructions available.</li>';
+                }
+                // Filter out empty strings and create list items
+                return instructions.filter(instr => instr.trim() !== '').map(instr => `<li>${instr}</li>`).join('');
+            };
+
+            statsDiv.innerHTML = `
+                <h6>Overlap with Google Route</h6>
+                <p>HERE: <strong>${stats.here_coverage}</strong> | OSM: <strong>${stats.osm_coverage}</strong></p>
+                <hr>
+                <h6>Route Details & Instructions</h6>
+                <div>
+                    <p><strong>Google:</strong> ${formatDistance(stats.google_details?.distance)} / ${formatDuration(stats.google_details?.duration)}</p>
+                    <ul class="list-unstyled" style="font-size: 0.9em; max-height: 100px; overflow-y: auto; background: #f8f9fa; padding: 5px; border-radius: 4px;">${formatInstructions(stats.google_details?.instructions)}</ul>
+                </div>
+                <div>
+                    <p><strong>HERE:</strong> ${formatDistance(stats.here_details?.distance)} / ${formatDuration(stats.here_details?.duration)}</p>
+                    <ul class="list-unstyled" style="font-size: 0.9em; max-height: 100px; overflow-y: auto; background: #f8f9fa; padding: 5px; border-radius: 4px;">${formatInstructions(stats.here_details?.instructions)}</ul>
+                </div>
+                <div>
+                    <p><strong>OSM:</strong> ${formatDistance(stats.osm_details?.distance)} / ${formatDuration(stats.osm_details?.duration)}</p>
+                    <ul class="list-unstyled" style="font-size: 0.9em; max-height: 100px; overflow-y: auto; background: #f8f9fa; padding: 5px; border-radius: 4px;">${formatInstructions(stats.osm_details?.instructions)}</ul>
+                </div>
+            `;
+        }
+    }
+
+    function loadRouteLayers() {
+        console.log("Loading route layers...");
+        // Remove old layers if they exist
+        const layers = ['google-routes-layer', 'here-routes-layer', 'osm-routes-layer', 'od-points-layer'];
+        const sources = ['google-routes', 'here-routes', 'osm-routes', 'od-points'];
+        layers.forEach(layer => map.getLayer(layer) && map.removeLayer(layer));
+        sources.forEach(source => map.getSource(source) && map.removeSource(source));
+        
+        map.addSource('google-routes', { type: 'geojson', data: '/data/google_routes.geojson' });
+        console.log("Added google-routes source");
+        map.addLayer({ 'id': 'google-routes-layer', 'type': 'line', 'source': 'google-routes', 'paint': { 'line-color': '#7627F5', 'line-width': 5, 'line-opacity': 0.75 } });
+        console.log("Added google-routes-layer");
+
+        map.addSource('here-routes', { type: 'geojson', data: '/data/here_routes.geojson' });
+        console.log("Added here-routes source");
+        map.addLayer({ 'id': 'here-routes-layer', 'type': 'line', 'source': 'here-routes', 'paint': { 'line-color': '#42B8B2', 'line-width': 4, 'line-opacity': 0.75 } });
+        console.log("Added here-routes-layer");
+
+        map.addSource('osm-routes', { type: 'geojson', data: '/data/osm_routes.geojson' });
+        console.log("Added osm-routes source");
+        map.addLayer({ 'id': 'osm-routes-layer', 'type': 'line', 'source': 'osm-routes', 'paint': { 'line-color': '#FF9A2E', 'line-width': 3, 'line-opacity': 0.75 } });
+        console.log("Added osm-routes-layer");
+
+        map.addSource('od-points', { type: 'geojson', data: '/data/od_points.geojson' });
+        console.log("Added od-points source");
+        map.addLayer({
+            id: 'od-points-layer',
+            type: 'circle',
+            source: 'od-points',
+            paint: {
+                'circle-radius': 8,
+                'circle-color': ['match', ['get', 'type'], 'origin', '#00FF00', 'destination', '#FF0000', '#000000']
+            }
+        });
+        console.log("Added od-points-layer");
+
+        addEventListeners();
+    }
+
+    function addEventListeners() {
+        document.getElementById('route-select').addEventListener('change', (e) => {
+            const routeId = e.target.value;
+            console.log("Selected route pair:", routeId);
+            const filter = (routeId === 'all') ? null : ['==', 'route_id', parseInt(routeId)];
+            const pointFilter = (routeId === 'all') ? null : ['==', 'pair_id', parseInt(routeId)];
+            console.log("Route filter:", JSON.stringify(filter));
+            console.log("Point filter:", JSON.stringify(pointFilter));
+            
+            map.setFilter('google-routes-layer', filter);
+            map.setFilter('here-routes-layer', filter);
+            map.setFilter('osm-routes-layer', filter);
+            map.setFilter('od-points-layer', pointFilter);
+
+            updateStats(routeId);
+        });
+
+        document.getElementById('google-routes-checkbox').addEventListener('change', (e) => {
+            map.setLayoutProperty('google-routes-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+        });
+        document.getElementById('here-routes-checkbox').addEventListener('change', (e) => {
+            map.setLayoutProperty('here-routes-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+        });
+        document.getElementById('osm-routes-checkbox').addEventListener('change', (e) => {
+            map.setLayoutProperty('osm-routes-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+        });
+    }
+});
+</script>
+
+</body>
+</html>
