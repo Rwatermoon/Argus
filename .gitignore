@@ -1,0 +1,16 @@
+# Python virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Environment variables
+# Contains secret API keys! DO NOT COMMIT!
+.env
+
+# Generated data files
+data/
+
+# macOS specific files
+.DS_Store
