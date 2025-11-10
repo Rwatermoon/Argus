@@ -1,8 +1,11 @@
 
 import os
 import subprocess
-from flask import Flask, render_template, send_from_directory, Response, request
+import json
+from datetime import datetime
+from flask import Flask, render_template, send_from_directory, Response, request, jsonify
 from dotenv import load_dotenv
+from osm_routing import get_graphhopper_usage
 
 load_dotenv()
 
@@ -19,6 +22,7 @@ process = None
 def index():
     return render_template('index.html', mapbox_token=MAPBOX_TOKEN)
 
+
 @app.route('/compare', methods=['POST'])
 def compare():
     """Run the data processing script."""
@@ -28,14 +32,18 @@ def compare():
 
     data = request.get_json()
     bbox = data.get('bbox')
-    strategy = data.get('strategy', 'shortest') # Default to 'shortest' if not provided
+    strategy = data.get('strategy', 'shortest')
+    osm_provider = data.get('osm_provider', 'osrm') # Get the OSM provider
 
     if not bbox or len(bbox) != 4:
         return {"status": "error", "output": "Invalid BBOX provided."}
 
-    # This is not recommended for production environments.
-    # A better approach would be to use a task queue like Celery.
-    cmd = ['python', '-u', 'data_processing.py'] + [str(c) for c in bbox] + [strategy]
+    cmd = [
+        'python', '-u', 'data_processing.py',
+        *map(str, bbox), # Unpack bbox elements
+        strategy,
+        osm_provider # Add osm_provider to the command
+    ]
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     return {"status": "success"}
 
@@ -46,13 +54,22 @@ def progress():
         global process
         if not process:
             return
-        for line in iter(process.stdout.readline, ''):
-            yield f"data: {line}\n\n"
-        process.stdout.close()
-        process.wait()
+        # Stream output line by line
+        with process.stdout:
+            for line in iter(process.stdout.readline, ''):
+                yield f"data: {line}\n\n"
+        process.wait() # Wait for the process to finish
+        yield 'event: close\ndata: Connection closed by server\n\n'
         process = None
 
     return Response(generate(), mimetype='text/event-stream')
+
+@app.route('/graphhopper-usage')
+def graphhopper_usage():
+    """Return the GraphHopper API usage for the current day."""
+    count = get_graphhopper_usage()
+    return jsonify({'count': count})
+
 
 @app.route('/data/<path:filename>')
 def serve_data(filename):

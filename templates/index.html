@@ -74,6 +74,14 @@
 
     <button id="compare-btn" class="btn btn-primary w-100 mb-3">Compare Routes</button>
 
+    <!-- Progress Bar Area -->
+    <div id="progress-container" style="display: none; margin-top: 15px; margin-bottom: 15px;">
+        <p id="progress-message" class="mb-1" style="font-size: 0.9em;">Starting comparison...</p>
+        <div class="progress" style="height: 20px;">
+            <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+        </div>
+    </div>
+
     <div class="mb-3">
         <label for="route-select" class="form-label">Select Route Pair</label>
         <select id="route-select" class="form-select" disabled>
@@ -91,10 +99,18 @@
     <div class="form-check">
         <input class="form-check-input" type="checkbox" id="osm-routes-checkbox" checked><label class="form-check-label">OSM Routes</label>
     </div>
+    <div class="ms-3 mt-1 mb-2">
+      <label for="osm-provider-select" class="form-label" style="font-size: 0.9em;">OSM Provider</label>
+      <select id="osm-provider-select" class="form-select form-select-sm">
+          <option value="osrm" selected>OSRM (Free)</option>
+          <option value="graphhopper">GraphHopper</option>
+      </select>
+    </div>
 
     <hr>
     <h5>Statistics</h5>
     <div id="stats">Click on a route to see details.</div>
+    <div id="graphhopper-usage-display" class="mt-2 text-muted" style="font-size: 0.8em;"></div>
 
     <hr>
     <h5>Log</h5>
@@ -198,6 +214,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Initial draw of the BBOX after the source has been added
         updateBbox(BBOX);
+        // Initial load of GH usage
+        updateGraphhopperUsage();
     });
 
     // --- Coordinate Display ---
@@ -312,49 +330,89 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     document.getElementById('compare-btn').addEventListener('click', () => {
-        const log = document.getElementById('output-log');
-        log.textContent = 'Starting route comparison...\n';
-        document.getElementById('compare-btn').disabled = true;
-        document.getElementById('route-select').disabled = true;
-        
-        const strategy = document.getElementById('routing-strategy').value;
+        const compareBtn = document.getElementById('compare-btn');
+        const routeSelect = document.getElementById('route-select');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
+        const progressMessage = document.getElementById('progress-message');
 
+        // --- Reset and show progress bar ---
+        progressContainer.style.display = 'block';
+        progressBar.style.width = '0%';
+        progressBar.textContent = '0%';
+        progressBar.setAttribute('aria-valuenow', '0');
+        progressBar.classList.remove('bg-danger');
+        progressBar.classList.add('progress-bar-animated', 'progress-bar-striped');
+        progressMessage.textContent = 'Initializing...';
+        compareBtn.disabled = true;
+        routeSelect.disabled = true;
+
+        const strategy = document.getElementById('routing-strategy').value;
+        const osmProvider = document.getElementById('osm-provider-select').value;
+
+        // --- Start backend process ---
         fetch('/compare', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            // Send both bbox and strategy to the backend
-            body: JSON.stringify({ bbox: BBOX, strategy: strategy }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bbox: BBOX, strategy: strategy, osm_provider: osmProvider }),
         })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) throw new Error('Failed to start comparison process.');
+                return response.json();
+            })
             .then(data => {
                 if (data.status === 'success') {
                     const eventSource = new EventSource('/progress');
+
                     eventSource.onmessage = function(event) {
-                        log.textContent += event.data;
-                        log.scrollTop = log.scrollHeight;
-                        if (event.data.includes("Route processing complete.")) {
-                            eventSource.close();
-                            log.textContent += '\nComparison finished. Loading layers...\n';
+                        try {
+                            const progressData = JSON.parse(event.data);
+                            progressBar.style.width = progressData.progress + '%';
+                            progressBar.textContent = progressData.progress + '%';
+                            progressBar.setAttribute('aria-valuenow', progressData.progress);
+                            progressMessage.textContent = progressData.message;
+                        } catch (e) {
+                            console.log("Received non-JSON message:", event.data);
+                        }
+                    };
+
+                    // Listen for our custom 'close' event
+                    eventSource.addEventListener('close', function(event) {
+                        console.log("Server signaled completion, closing connection.");
+                        eventSource.close();
+
+                        // Finalize UI and load data
+                        progressBar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+                        progressMessage.textContent = 'Comparison complete! Loading results...';
+                        
+                        setTimeout(() => { // Give a moment for the user to see the "complete" message
                             populateRouteSelect();
                             loadRouteLayers();
                             loadStats();
-                            document.getElementById('compare-btn').disabled = false;
-                            document.getElementById('route-select').disabled = false;
-                            log.textContent += 'Layers loaded.\n';
-                        }
-                    };
+                            updateGraphhopperUsage(); // Update usage after successful run
+                            compareBtn.disabled = false;
+                            routeSelect.disabled = false;
+                        }, 500);
+                    });
+
                     eventSource.onerror = function(err) {
                         console.error("EventSource failed:", err);
-                        eventSource.close();
-                        document.getElementById('compare-btn').disabled = false;
-                        document.getElementById('route-select').disabled = false;
+                        progressMessage.textContent = 'An error occurred during processing.';
+                        progressBar.classList.add('bg-danger');
+                        eventSource.close(); // Important to close it on error too
+                        compareBtn.disabled = false;
                     };
                 } else {
-                    log.textContent += `Error: ${data.output}\n`;
-                    document.getElementById('compare-btn').disabled = false;
+                    progressMessage.textContent = `Error: ${data.output}`;
+                    progressBar.classList.add('bg-danger');
+                    compareBtn.disabled = false;
                 }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                progressMessage.textContent = 'Failed to start the comparison process.';
+                progressBar.classList.add('bg-danger');
+                compareBtn.disabled = false;
             });
     });
 
@@ -380,6 +438,19 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
         map.getSource('bbox').setData(bboxPolygon);
+    }
+
+    function updateGraphhopperUsage() {
+        const usageDisplay = document.getElementById('graphhopper-usage-display');
+        fetch('/graphhopper-usage')
+            .then(response => response.json())
+            .then(data => {
+                usageDisplay.textContent = `GraphHopper API Calls: ${data.count} / 500`;
+            })
+            .catch(err => {
+                console.error('Error fetching GraphHopper usage:', err);
+                usageDisplay.textContent = 'Could not load GH usage.';
+            });
     }
 
     function populateRouteSelect() {

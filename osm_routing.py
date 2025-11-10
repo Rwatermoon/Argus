@@ -1,8 +1,99 @@
 import requests
 import polyline
 from shapely.geometry import LineString
+import os
+import json
+from datetime import datetime
 
 OSRM_ENDPOINT = "http://router.project-osrm.org/route/v1/driving/"
+GRAPHHOPPER_ENDPOINT = "https://graphhopper.com/api/1/route"
+USAGE_FILE = 'graphhopper_usage.json'
+
+def _update_gh_usage():
+    """Increments the GraphHopper API usage count for the current day."""
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    usage = {'date': today, 'count': 0}
+    if os.path.exists(USAGE_FILE):
+        try:
+            with open(USAGE_FILE, 'r') as f:
+                data = json.load(f)
+            if data.get('date') == today:
+                usage = data
+        except (json.JSONDecodeError, IOError):
+            # If file is corrupted or unreadable, start fresh
+            pass
+    
+    usage['count'] += 1
+    
+    with open(USAGE_FILE, 'w') as f:
+        json.dump(usage, f)
+
+def get_graphhopper_usage():
+    """Gets the GraphHopper API usage count for the current day."""
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    if not os.path.exists(USAGE_FILE):
+        return 0
+    try:
+        with open(USAGE_FILE, 'r') as f:
+            data = json.load(f)
+        if data.get('date') == today:
+            return data.get('count', 0)
+    except (json.JSONDecodeError, IOError):
+        pass
+    return 0
+
+def get_graphhopper_route(origin, destination, routing_options=None):
+    """
+    Get a route from GraphHopper API.
+    """
+    api_key = os.getenv("GRAPHHOPPER_API_KEY")
+    if not api_key:
+        print("Error: GRAPHHOPPER_API_KEY not set.")
+        return None, None
+
+    if routing_options is None:
+        routing_options = {}
+
+    # Map our strategy to GraphHopper's 'weighting' parameter
+    strategy = routing_options.pop('strategy', 'fastest') # Pop to avoid sending it as a query param
+    weighting = 'fastest' if strategy == 'fastest' else 'shortest'
+
+    params = {
+        'point': [f'{origin[1]},{origin[0]}', f'{destination[1]},{destination[0]}'],
+        'vehicle': 'car',
+        'instructions': 'true',
+        'points_encoded': 'true',
+        'key': api_key,
+        'weighting': weighting,
+        **routing_options
+    }
+
+    try:
+        response = requests.get(GRAPHHOPPER_ENDPOINT, params=params)
+        response.raise_for_status()
+        _update_gh_usage() # Increment usage count on successful API call
+        data = response.json()
+
+        if 'paths' in data and data['paths']:
+            path = data['paths'][0]
+            # GraphHopper uses the same polyline encoding
+            decoded_geom = polyline.decode(path['points'])
+            line = LineString([(lon, lat) for lat, lon in decoded_geom])
+
+            instructions = [item['text'] for item in path.get('instructions', [])]
+            
+            details = {
+                'distance': path['distance'], # meters
+                'duration': path['time'] / 1000, # ms to seconds
+                'instructions': instructions
+            }
+            return line, details
+        else:
+            print(f"GraphHopper API returned no route. Response: {data}")
+            return None, None
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching GraphHopper route: {e}")
+        return None, None
 
 def get_osm_route(origin, destination, routing_options=None):
     """

@@ -14,19 +14,33 @@ def get_google_route(origin, destination, routing_options=None):
     """
     if routing_options is None:
         routing_options = {}
+        
+    # Pop the strategy to use it for logic, not as a query param
+    strategy = routing_options.pop('strategy', 'fastest')
 
     try:
+        # Request alternative routes from the API
         directions_result = gmaps.directions(
             (origin[1], origin[0]),
             (destination[1], destination[0]),
             mode="driving",
+            alternatives=True,
             **routing_options
         )
 
-        print(f"Google API response: {directions_result}")
+        # print(f"Google API response: {directions_result}") # This can be very verbose
 
         if directions_result:
-            route = directions_result[0]
+            best_route = None
+            
+            if strategy == 'shortest':
+                # Find the route with the minimum distance
+                best_route = min(directions_result, key=lambda r: r['legs'][0]['distance']['value'])
+            else: # 'fastest' or default
+                # Find the route with the minimum duration
+                best_route = min(directions_result, key=lambda r: r['legs'][0]['duration']['value'])
+
+            route = best_route
             polyline = route['overview_polyline']['points']
             decoded_polyline = googlemaps.convert.decode_polyline(polyline)
             # The decoded polyline is a list of dicts {'lat': ..., 'lng': ...}

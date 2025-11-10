@@ -6,7 +6,7 @@ from shapely.geometry import LineString, Point
 from concurrent.futures import ThreadPoolExecutor
 from google_routing import get_google_route
 from here_routing import get_here_route
-from osm_routing import get_osm_route
+from osm_routing import get_osm_route, get_graphhopper_route
 
 # Default Bounding box for Stuttgart-Weilimdorf
 BBOX = (9.10, 48.78, 9.20, 48.88) # min_lon, min_lat, max_lon, max_lat
@@ -22,6 +22,13 @@ def generate_random_points_in_bbox(bbox, num_points):
     lons = np.random.uniform(min_lon, max_lon, num_points)
     lats = np.random.uniform(min_lat, max_lat, num_points)
     return list(zip(lons, lats))
+
+def log_progress(current, total, message):
+    """Prints progress as a JSON object for the frontend to parse."""
+    progress_percentage = int((current / total) * 100)
+    progress_data = {"progress": progress_percentage, "message": message}
+    print(json.dumps(progress_data))
+    sys.stdout.flush() # Ensure the output is sent immediately
 
 def calculate_coverage(base_route_gdf_proj, other_route, buffer_size):
     """Calculates the coverage percentage of other_route on a buffered base_route."""
@@ -43,11 +50,15 @@ def save_gdf_to_geojson(data, filename):
         gdf = gpd.GeoDataFrame(data, crs="EPSG:4326", geometry='geometry')
         gdf.to_file(f"data/{filename}", driver='GeoJSON')
 
-def process_routes(bbox, strategy='shortest'):
+def process_routes(bbox, strategy='shortest', osm_provider='osrm'):
     """Fetch and process routes from different providers."""
-    print(f"Using Bounding Box: {bbox}")
-    print(f"Using Routing Strategy: {strategy}")
-    print(f"Generating {NUM_ROUTES} random origin/destination pairs in the given BBOX...")
+    # Total steps: 1 for setup, NUM_ROUTES for processing, 1 for saving
+    total_steps = NUM_ROUTES + 2
+
+    log_progress(0, total_steps, f"Initializing... Strategy: {strategy}, OSM Provider: {osm_provider}")
+
+    # Step 1: Generate points
+    log_progress(1, total_steps, f"Generating {NUM_ROUTES} random origin/destination pairs...")
 
     # Ensure the origin and destination are not the same
     origins = []
@@ -64,9 +75,10 @@ def process_routes(bbox, strategy='shortest'):
     stats = {}
 
     # --- Define routing options based on strategy ---
-    google_opts = {}
     here_opts = {}
-    osm_opts = {}
+    # Pass the strategy to the providers that support it
+    google_opts = {'strategy': strategy}
+    osm_opts = {'strategy': strategy}
 
     if strategy == 'shortest':
         here_opts = {'routingMode': 'short'}
@@ -76,7 +88,8 @@ def process_routes(bbox, strategy='shortest'):
         for i in range(NUM_ROUTES):
             origin = origins[i]
             destination = destinations[i]
-            print(f"Processing route {i+1}/{NUM_ROUTES} from {origin} to {destination}...")
+            # Step 1 (generation) + i+1 (current route)
+            log_progress(i + 2, total_steps, f"Fetching route {i+1}/{NUM_ROUTES}...")
 
             od_points.append({'geometry': Point(origin), 'pair_id': i, 'type': 'origin'})
             od_points.append({'geometry': Point(destination), 'pair_id': i, 'type': 'destination'})
@@ -84,7 +97,12 @@ def process_routes(bbox, strategy='shortest'):
             # Submit all routing requests concurrently
             future_google = executor.submit(get_google_route, origin, destination, google_opts)
             future_here = executor.submit(get_here_route, origin, destination, here_opts)
-            future_osm = executor.submit(get_osm_route, origin, destination, osm_opts)
+            
+            # Choose OSM provider based on the parameter
+            if osm_provider == 'graphhopper':
+                future_osm = executor.submit(get_graphhopper_route, origin, destination, osm_opts)
+            else: # Default to OSRM
+                future_osm = executor.submit(get_osm_route, origin, destination, osm_opts)
 
             # Get results
             google_route, google_details = future_google.result()
@@ -95,7 +113,7 @@ def process_routes(bbox, strategy='shortest'):
                 google_routes.append({
                     'geometry': google_route, 'route_id': i, 
                     'distance': google_details.get('distance'), 'duration': google_details.get('duration'),
-                    'instructions': json.dumps(google_details.get('instructions', [])) # GeoJSON properties work best with simple types or JSON strings
+                    'instructions': json.dumps(google_details.get('instructions', []))
                 })
             if here_route:
                 here_routes.append({
@@ -120,10 +138,11 @@ def process_routes(bbox, strategy='shortest'):
                     "here_coverage": f"{here_coverage:.2f}%",
                     "osm_coverage": f"{osm_coverage:.2f}%",
                     "google_details": google_details,
-                    # Add details for other providers if they exist
                     "here_details": here_details if here_details else {},
                     "osm_details": osm_details if osm_details else {}
                 }
+
+    log_progress(total_steps, total_steps, "Saving results...")
 
     return google_routes, here_routes, osm_routes, od_points, stats
 
@@ -132,31 +151,34 @@ if __name__ == '__main__':
     if not os.path.exists('data'):
         os.makedirs('data')
 
-    # Check for command-line arguments for BBOX
+    # Check for command-line arguments for BBOX, strategy, and osm_provider
     if len(sys.argv) >= 5:
         try:
             current_bbox = tuple(map(float, sys.argv[1:5]))
         except ValueError:
             print("Invalid BBOX arguments. Using default.")
             current_bbox = BBOX
-        # The 6th argument is the strategy
+        
         strategy = sys.argv[5] if len(sys.argv) > 5 else 'shortest'
+        osm_provider = sys.argv[6] if len(sys.argv) > 6 else 'osrm'
     else:
         current_bbox = BBOX
         strategy = 'shortest'
+        osm_provider = 'osrm'
 
-    google_routes, here_routes, osm_routes, od_points, stats = process_routes(current_bbox, strategy)
+    google_routes, here_routes, osm_routes, od_points, stats = process_routes(current_bbox, strategy, osm_provider)
 
     # Save routes to GeoJSON files
     save_gdf_to_geojson(google_routes, "google_routes.geojson")
     save_gdf_to_geojson(here_routes, "here_routes.geojson")
     save_gdf_to_geojson(osm_routes, "osm_routes.geojson")
     
-    if od_points: # Keep this separate as it has a different structure
+    if od_points:
         od_gdf = gpd.GeoDataFrame(od_points, crs="EPSG:4326", geometry='geometry')
         od_gdf.to_file("data/od_points.geojson", driver='GeoJSON')
 
     with open("data/stats.json", "w") as f:
         json.dump(stats, f)
 
-    print("Route processing complete.")
+    # Final message
+    log_progress(100, 100, "Comparison complete! You can now view the results.")
