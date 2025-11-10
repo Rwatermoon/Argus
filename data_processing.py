@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from google_routing import get_google_route
 from here_routing import get_here_route
 from osm_routing import get_osm_route, get_graphhopper_route
+from logger_config import setup_logger
+import logging
 
 # Default Bounding box for Stuttgart-Weilimdorf
 BBOX = (9.10, 48.78, 9.20, 48.88) # min_lon, min_lat, max_lon, max_lat
@@ -16,6 +18,9 @@ BUFFER_METERS = 30 # Buffer size in meters for overlap calculation
 # Use a projected CRS for accurate length calculations (UTM zone 32N for Stuttgart)
 CRS_PROJ = "EPSG:32632"
 
+# Setup logger
+setup_logger()
+
 def generate_random_points_in_bbox(bbox, num_points):
     """Generate a list of random points within a bounding box."""
     min_lon, min_lat, max_lon, max_lat = bbox
@@ -24,11 +29,13 @@ def generate_random_points_in_bbox(bbox, num_points):
     return list(zip(lons, lats))
 
 def log_progress(current, total, message):
-    """Prints progress as a JSON object for the frontend to parse."""
+    """Logs progress as a JSON object for the frontend to parse."""
     progress_percentage = int((current / total) * 100)
-    progress_data = {"progress": progress_percentage, "message": message}
-    print(json.dumps(progress_data))
-    sys.stdout.flush() # Ensure the output is sent immediately
+    # Use a specific format that the frontend can distinguish from regular logs
+    progress_log = {"type": "progress", "progress": progress_percentage, "message": message}
+    # Print directly to stdout to ensure it's always sent, regardless of log level
+    print(json.dumps(progress_log))
+    sys.stdout.flush()
 
 def calculate_coverage(base_route_gdf_proj, other_route, buffer_size):
     """Calculates the coverage percentage of other_route on a buffered base_route."""
@@ -162,7 +169,7 @@ if __name__ == '__main__':
         try:
             current_bbox = tuple(map(float, sys.argv[1:5]))
         except ValueError:
-            print("Invalid BBOX arguments. Using default.")
+            logging.error("Invalid BBOX arguments. Using default.")
             current_bbox = BBOX
         
         strategy = sys.argv[5] if len(sys.argv) > 5 else 'shortest'

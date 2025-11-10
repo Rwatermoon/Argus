@@ -367,17 +367,34 @@ document.addEventListener('DOMContentLoaded', function() {
                     const eventSource = new EventSource('/progress');
 
                     eventSource.onmessage = function(event) {
+                        let logData;
                         try {
-                            const progressData = JSON.parse(event.data);
-                            progressBar.style.width = progressData.progress + '%';
-                            progressBar.textContent = progressData.progress + '%';
-                            progressBar.setAttribute('aria-valuenow', progressData.progress);
-                            progressMessage.textContent = progressData.message;
+                            logData = JSON.parse(event.data);
                         } catch (e) {
-                            // This is where non-JSON logs like "Error: GRAPHHOPPER_API_KEY not set." will be caught.
-                            log.textContent += event.data + '\n';
-                            log.scrollTop = log.scrollHeight; // Auto-scroll
-                            console.log("Received non-JSON message:", event.data);
+                            // Handle plain text if any, treat as INFO
+                            logData = { level: 'INFO', message: event.data };
+                        }
+
+                        // Check if it's a progress update or a regular log message
+                        if (logData.type === 'progress') {
+                            progressBar.style.width = logData.progress + '%';
+                            progressBar.textContent = logData.progress + '%';
+                            progressBar.setAttribute('aria-valuenow', logData.progress);
+                            progressMessage.textContent = logData.message;
+                        } else {
+                            // It's a regular log message, add it to the log window with color
+                            const logEntry = document.createElement('div');
+                            const level = logData.level || 'INFO';
+                            const colorMap = {
+                                'DEBUG': 'text-muted',
+                                'INFO': 'text-dark',
+                                'WARNING': 'text-warning',
+                                'ERROR': 'text-danger'
+                            };
+                            logEntry.className = colorMap[level] || 'text-dark';
+                            logEntry.textContent = `[${level}] ${logData.message}`;
+                            log.appendChild(logEntry);
+                            log.scrollTop = log.scrollHeight;
                         }
                     };
 

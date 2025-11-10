@@ -2,8 +2,12 @@ import os
 import googlemaps
 from shapely.geometry import LineString
 from dotenv import load_dotenv
+import logging
 
 load_dotenv()
+
+# Get a logger instance
+logger = logging.getLogger(__name__)
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_ROADS_API_KEY") # Using the same key as before
 gmaps = googlemaps.Client(key=GOOGLE_API_KEY)
@@ -28,7 +32,7 @@ def get_google_route(origin, destination, routing_options=None):
             **routing_options
         )
 
-        # print(f"Google API response: {directions_result}") # This can be very verbose
+        logger.debug(f"Google API returned {len(directions_result)} alternative routes.")
 
         if directions_result:
             best_route = None
@@ -69,11 +73,11 @@ def get_google_route(origin, destination, routing_options=None):
             
             return line, details
         else:
-            print("Google API returned no route.")
+            logger.warning("Google API returned no route.")
             return None, None
     except googlemaps.exceptions.ApiError as e:
-        print(f"Google API Error: {e}")
+        logger.error(f"Google API Error: {e}")
         return None, None
     except Exception as e:
-        print(f"An unexpected error occurred with Google API: {e}")
+        logger.error(f"An unexpected error occurred with Google API: {e}")
         return None, None
