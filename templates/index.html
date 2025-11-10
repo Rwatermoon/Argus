@@ -103,6 +103,9 @@
 
 <div id="map-container">
     <div id="map"></div>
+    <div id="coordinates-display" style="position: absolute; bottom: 10px; left: 10px; background-color: rgba(0,0,0,0.5); color: white; padding: 5px 10px; border-radius: 5px; font-family: sans-serif; font-size: 0.8em; font-style: italic; cursor: pointer; z-index: 1000;">
+        Click to copy coordinates
+    </div>
 </div>
 
 <div id="legend" class="p-2 bg-white rounded shadow-sm" style="position: absolute; top: 10px; right: 10px; z-index: 1000;">
@@ -196,6 +199,47 @@ document.addEventListener('DOMContentLoaded', function() {
         // Initial draw of the BBOX after the source has been added
         updateBbox(BBOX);
     });
+
+    // --- Coordinate Display ---
+    const coordinatesDisplay = document.getElementById('coordinates-display');
+
+    map.on('mousemove', (e) => {
+        const lng = e.lngLat.lng.toFixed(6);
+        const lat = e.lngLat.lat.toFixed(6);
+        coordinatesDisplay.textContent = `Lng: ${lng}, Lat: ${lat}`;
+    });
+
+    map.on('mouseleave', () => {
+        coordinatesDisplay.textContent = 'Click to copy coordinates';
+    });
+
+    map.on('contextmenu', (e) => {
+        const lng = e.lngLat.lng.toFixed(6);
+        const lat = e.lngLat.lat.toFixed(6);
+        const coordinates = `${lng}, ${lat}`;
+        copyToClipboard(coordinates, coordinatesDisplay);
+    });
+
+    coordinatesDisplay.addEventListener('click', () => {
+        const text = coordinatesDisplay.textContent;
+        // Avoid copying the default text
+        if (text.includes('Lng:')) {
+            const coordinates = text.replace('Lng: ', '').replace('Lat: ', '');
+            copyToClipboard(coordinates, coordinatesDisplay);
+        }
+    });
+
+    function copyToClipboard(text, element) {
+        navigator.clipboard.writeText(text).then(() => {
+            const originalText = element.textContent;
+            element.textContent = 'Copied!';
+            setTimeout(() => {
+                element.textContent = originalText;
+            }, 1500);
+        }).catch(err => {
+            console.error('Failed to copy: ', err);
+        });
+    }
 
     // --- Event Listeners ---
 
