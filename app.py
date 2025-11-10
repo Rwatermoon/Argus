@@ -6,6 +6,7 @@ from datetime import datetime
 from flask import Flask, render_template, send_from_directory, Response, request, jsonify
 from dotenv import load_dotenv
 from osm_routing import get_graphhopper_usage
+from data_processing import calculate_single_route_comparison
 
 load_dotenv()
 
@@ -46,6 +47,31 @@ def compare():
     ]
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     return {"status": "success"}
+
+@app.route('/calculate-single-route', methods=['POST'])
+def calculate_single():
+    """Calculate and return a single route comparison."""
+    global process
+    if process and process.poll() is None:
+        return jsonify({"status": "error", "output": "A comparison is already in progress."}), 400
+
+    data = request.get_json()
+    origin = data.get('origin')
+    destination = data.get('destination')
+    strategy = data.get('strategy', 'shortest')
+    osm_provider = data.get('osm_provider', 'osrm')
+
+    if not origin or not destination or len(origin) != 2 or len(destination) != 2:
+        return jsonify({"status": "error", "output": "Origin or destination missing."}), 400
+
+    cmd = [
+        'python', '-u', 'data_processing.py', '--manual',
+        str(origin[0]), str(origin[1]),
+        str(destination[0]), str(destination[1]),
+        strategy, osm_provider
+    ]
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    return jsonify({"status": "success"})
 
 @app.route('/progress')
 def progress():

@@ -16,6 +16,7 @@ def get_google_route(origin, destination, routing_options=None):
     """
     Get a route from Google Directions API.
     """
+    logger.debug(f"get_google_route called with origin: {origin}, destination: {destination}")
     if routing_options is None:
         routing_options = {}
         

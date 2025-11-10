@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+import json
 
 def setup_logger():
     """
@@ -10,12 +11,16 @@ def setup_logger():
     log_level_str = os.getenv('LOG_LEVEL', 'INFO').upper()
     log_level = getattr(logging, log_level_str, logging.INFO)
 
-    # Use a custom formatter to output logs as JSON strings
-    # This makes them easy to parse on the frontend
-    formatter = logging.Formatter(
-        '{"level": "%(levelname)s", "message": "%(message)s"}'
-    )
+    # Custom formatter to handle JSON encoding of the message
+    class JsonFormatter(logging.Formatter):
+        def format(self, record):
+            log_record = {
+                "level": record.levelname,
+                "message": record.getMessage()
+            }
+            return json.dumps(log_record)
 
+    formatter = JsonFormatter()
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
 

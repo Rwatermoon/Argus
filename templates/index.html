@@ -50,6 +50,14 @@
         </select>
     </div>
 
+    <div class="btn-group w-100 mb-2" role="group">
+        <input type="radio" class="btn-check" name="mode-select" id="mode-random" autocomplete="off" checked>
+        <label class="btn btn-outline-primary" for="mode-random">Random Compare</label>
+
+        <input type="radio" class="btn-check" name="mode-select" id="mode-manual" autocomplete="off">
+        <label class="btn btn-outline-primary" for="mode-manual">Manual Selection</label>
+    </div>
+
     <div class="mb-3">
         <label class="form-label">Bounding Box</label>
         <button id="draw-bbox-btn" class="btn btn-secondary btn-sm mb-2">Draw on Map</button>
@@ -72,7 +80,12 @@
         </select>
     </div>
 
-    <button id="compare-btn" class="btn btn-primary w-100 mb-3">Compare Routes</button>
+    <div id="random-controls">
+        <button id="compare-btn" class="btn btn-primary w-100 mb-3">Compare Random Routes</button>
+    </div>
+    <div id="manual-controls" style="display: none;">
+        <button id="calculate-manual-btn" class="btn btn-success w-100 mb-3" disabled>Calculate Manual Route</button>
+    </div>
 
     <!-- Progress Bar Area -->
     <div id="progress-container" style="display: none; margin-top: 15px; margin-bottom: 15px;">
@@ -82,7 +95,7 @@
         </div>
     </div>
 
-    <div class="mb-3">
+    <div id="route-select-container" class="mb-3">
         <label for="route-select" class="form-label">Select Route Pair</label>
         <select id="route-select" class="form-select" disabled>
             <option value="all">Show All</option>
@@ -170,6 +183,10 @@ document.addEventListener('DOMContentLoaded', function() {
     let BBOX = [9.10, 48.78, 9.20, 48.88]; // Default: Stuttgart
     const NUM_ROUTES = 5;
     let statsData = {};
+    let manualMode = false;
+    let manualOrigin = null;
+    let manualDestination = null;
+    let manualOriginMarker, manualDestinationMarker;
 
     const locations = {
         'stuttgart': {
@@ -211,6 +228,37 @@ document.addEventListener('DOMContentLoaded', function() {
                 'line-dasharray': [2, 2]
             }
         });
+
+        // Add sources and layers for manual route markers
+        map.addSource('manual-points', {
+            'type': 'geojson',
+            'data': { 'type': 'FeatureCollection', 'features': [] }
+        });
+        map.addLayer({
+            'id': 'manual-points-layer',
+            'type': 'circle',
+            'source': 'manual-points',
+            'paint': {
+                'circle-radius': 10,
+                'circle-color': ['match', ['get', 'type'], 'origin', '#34A853', 'destination', '#EA4335', '#000000'],
+                'circle-stroke-color': 'white',
+                'circle-stroke-width': 2
+            }
+        });
+
+        // --- Pre-initialize all route sources with empty data ---
+        const emptyGeoJSON = { 'type': 'FeatureCollection', 'features': [] };
+        map.addSource('google-routes', { type: 'geojson', data: emptyGeoJSON });
+        map.addLayer({ 'id': 'google-routes-layer', 'type': 'line', 'source': 'google-routes', 'paint': { 'line-color': '#7627F5', 'line-width': 5, 'line-opacity': 0.75 } });
+
+        map.addSource('here-routes', { type: 'geojson', data: emptyGeoJSON });
+        map.addLayer({ 'id': 'here-routes-layer', 'type': 'line', 'source': 'here-routes', 'paint': { 'line-color': '#42B8B2', 'line-width': 4, 'line-opacity': 0.75 } });
+
+        map.addSource('osm-routes', { type: 'geojson', data: emptyGeoJSON });
+        map.addLayer({ 'id': 'osm-routes-layer', 'type': 'line', 'source': 'osm-routes', 'paint': { 'line-color': '#FF9A2E', 'line-width': 3, 'line-opacity': 0.75 } });
+
+        map.addSource('od-points', { type: 'geojson', data: emptyGeoJSON });
+        map.addLayer({ id: 'od-points-layer', type: 'circle', source: 'od-points', paint: { 'circle-radius': 8, 'circle-color': ['match', ['get', 'type'], 'origin', '#00FF00', 'destination', '#FF0000', '#000000'] } });
 
         // Initial draw of the BBOX after the source has been added
         updateBbox(BBOX);
@@ -329,6 +377,49 @@ document.addEventListener('DOMContentLoaded', function() {
         draw.changeMode('simple_select');
     });
 
+    // --- Mode Switching ---
+    document.querySelectorAll('input[name="mode-select"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            manualMode = (this.id === 'mode-manual');
+            document.getElementById('random-controls').style.display = manualMode ? 'none' : 'block';
+            document.getElementById('manual-controls').style.display = manualMode ? 'block' : 'none';
+            document.getElementById('route-select-container').style.display = manualMode ? 'none' : 'block';
+            
+            // Reset manual selection state when switching modes
+            clearManualPoints();
+            if (manualMode) {
+                updateStats('manual-prompt');
+            } else {
+                updateStats('all'); // Revert to default stats view
+            }
+        });
+    });
+
+    // --- Manual Route Logic ---
+    map.on('click', (e) => {
+        if (!manualMode) return;
+
+        const coords = [e.lngLat.lng, e.lngLat.lat];
+
+        if (!manualOrigin) {
+            manualOrigin = coords;
+            updateManualPoints();
+            updateStats('manual-dest-prompt');
+        } else if (!manualDestination) {
+            manualDestination = coords;
+            updateManualPoints();
+            document.getElementById('calculate-manual-btn').disabled = false;
+            updateStats('manual-ready');
+        } else {
+            // If both are set, reset and start over
+            clearManualPoints();
+            manualOrigin = coords;
+            updateManualPoints();
+            updateStats('manual-dest-prompt');
+        }
+    });
+
+
     document.getElementById('compare-btn').addEventListener('click', () => {
         const compareBtn = document.getElementById('compare-btn');
         const routeSelect = document.getElementById('route-select');
@@ -438,6 +529,90 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     });
 
+    document.getElementById('calculate-manual-btn').addEventListener('click', () => {
+        if (!manualOrigin || !manualDestination) return;
+
+        const calcBtn = document.getElementById('calculate-manual-btn');
+        calcBtn.disabled = true;
+        
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
+        const progressMessage = document.getElementById('progress-message');
+        const log = document.getElementById('output-log');
+
+        // --- Reset and show progress bar ---
+        progressContainer.style.display = 'block';
+        progressBar.style.width = '0%';
+        progressBar.textContent = '0%';
+        progressBar.setAttribute('aria-valuenow', '0');
+        progressBar.classList.remove('bg-danger');
+        progressBar.classList.add('progress-bar-animated', 'progress-bar-striped');
+        progressMessage.textContent = 'Starting manual calculation...';
+        log.textContent = 'Starting manual calculation...\n';
+
+        const strategy = document.getElementById('routing-strategy').value;
+        const osmProvider = document.getElementById('osm-provider-select').value;
+
+        fetch('/calculate-single-route', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ origin: manualOrigin, destination: manualDestination, strategy: strategy, osm_provider: osmProvider })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status !== 'success') {
+                throw new Error(data.output || 'Failed to start manual calculation.');
+            }
+
+            const eventSource = new EventSource('/progress');
+
+            eventSource.addEventListener('message', function(event) {
+                let logData;
+                try { 
+                    logData = JSON.parse(event.data); 
+                } catch (e) { 
+                    console.error("Failed to parse SSE data:", e, "Raw data:", event.data);
+                    return; }
+
+                if (logData.type === 'manual_result') {
+                    console.log("Received manual_result data:", logData.data); // Add this for browser console debugging
+                    const result = logData.data;
+                    // Directly load the returned GeoJSON data
+                    map.getSource('google-routes').setData(result.google_routes);
+                    map.getSource('here-routes').setData(result.here_routes);
+                    map.getSource('osm-routes').setData(result.osm_routes);
+                    
+                    statsData = result.stats;
+                    updateStats('0');
+
+                    // Don't close the connection here. Wait for the 'close' event from the server
+                    // to ensure a clean shutdown and avoid race conditions.
+                }
+                else if (logData.type === 'progress') {
+                    // Also handle progress updates for manual mode
+                    progressBar.style.width = logData.progress + '%';
+                    progressBar.textContent = logData.progress + '%';
+                    progressMessage.textContent = logData.message;
+                }
+            });
+
+            eventSource.addEventListener('close', function(event) {
+                console.log("Server signaled completion for manual route, closing connection.");
+                progressBar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+                calcBtn.disabled = false;
+                eventSource.close();
+            });
+
+            eventSource.addEventListener('error', function(err) {
+                console.error("EventSource failed:", err);
+                progressMessage.textContent = 'An error occurred during processing.';
+                progressBar.classList.add('bg-danger');
+                calcBtn.disabled = false;
+                eventSource.close();
+            });
+        });
+    });
+
     function updateBbox(newBbox) {
         BBOX = newBbox;
         
@@ -497,10 +672,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function updateStats(routeId) {
         const statsDiv = document.getElementById('stats');
-        if (routeId === 'all' || !statsData[routeId]) {
+        if (routeId === 'all') {
             statsDiv.innerHTML = 'Select a route pair to see details.';
+            return;
+        }
+        if (routeId === 'manual-prompt') {
+            statsDiv.innerHTML = '<p class="text-info">Click on the map to set the <strong>Origin</strong> point.</p>';
+            return;
+        }
+        if (routeId === 'manual-dest-prompt') {
+            statsDiv.innerHTML = '<p class="text-info">Click on the map to set the <strong>Destination</strong> point.</p>';
+            return;
         } else {
-            const stats = statsData[routeId];
+            const stats = statsData[routeId] || statsData['0']; // Handle manual mode where ID is '0'
+            if (!stats) { statsDiv.innerHTML = 'No statistics available for this route.'; return; }
             const formatDistance = (meters) => meters ? `${(meters / 1000).toFixed(2)} km` : 'N/A';
             const formatDuration = (seconds) => {
                 if (!seconds) return 'N/A';
@@ -538,49 +723,40 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function clearManualPoints() {
+        manualOrigin = null;
+        manualDestination = null;
+        document.getElementById('calculate-manual-btn').disabled = true;
+        updateManualPoints();
+    }
+
+    function updateManualPoints() {
+        const features = [];
+        if (manualOrigin) {
+            features.push({
+                type: 'Feature', geometry: { type: 'Point', coordinates: manualOrigin }, properties: { type: 'origin' }
+            });
+        }
+        if (manualDestination) {
+            features.push({
+                type: 'Feature', geometry: { type: 'Point', coordinates: manualDestination }, properties: { type: 'destination' }
+            });
+        }
+        map.getSource('manual-points').setData({
+            type: 'FeatureCollection', features: features
+        });
+    }
+
     function loadRouteLayers() {
         console.log("Loading route layers...");
-        // --- Robustly remove old layers and sources before adding new ones ---
-        const layers = ['google-routes-layer', 'here-routes-layer', 'osm-routes-layer', 'od-points-layer'];
-        const sources = ['google-routes', 'here-routes', 'osm-routes', 'od-points'];
-        
-        layers.forEach(layerId => {
-            if (map.getLayer(layerId)) map.removeLayer(layerId);
-        });
-        sources.forEach(sourceId => {
-            if (map.getSource(sourceId)) map.removeSource(sourceId);
-        });
-
         // Add a cache-busting query parameter to ensure fresh data is loaded
         const cacheBuster = `?v=${new Date().getTime()}`;
 
-        map.addSource('google-routes', { type: 'geojson', data: `/data/google_routes.geojson${cacheBuster}` });
-        console.log("Added google-routes source");
-        map.addLayer({ 'id': 'google-routes-layer', 'type': 'line', 'source': 'google-routes', 'paint': { 'line-color': '#7627F5', 'line-width': 5, 'line-opacity': 0.75 } });
-        console.log("Added google-routes-layer");
-
-        map.addSource('here-routes', { type: 'geojson', data: `/data/here_routes.geojson${cacheBuster}` });
-        console.log("Added here-routes source");
-        map.addLayer({ 'id': 'here-routes-layer', 'type': 'line', 'source': 'here-routes', 'paint': { 'line-color': '#42B8B2', 'line-width': 4, 'line-opacity': 0.75 } });
-        console.log("Added here-routes-layer");
-
-        map.addSource('osm-routes', { type: 'geojson', data: `/data/osm_routes.geojson${cacheBuster}` });
-        console.log("Added osm-routes source");
-        map.addLayer({ 'id': 'osm-routes-layer', 'type': 'line', 'source': 'osm-routes', 'paint': { 'line-color': '#FF9A2E', 'line-width': 3, 'line-opacity': 0.75 } });
-        console.log("Added osm-routes-layer");
-
-        map.addSource('od-points', { type: 'geojson', data: `/data/od_points.geojson${cacheBuster}` });
-        console.log("Added od-points source");
-        map.addLayer({
-            id: 'od-points-layer',
-            type: 'circle',
-            source: 'od-points',
-            paint: {
-                'circle-radius': 8,
-                'circle-color': ['match', ['get', 'type'], 'origin', '#00FF00', 'destination', '#FF0000', '#000000']
-            }
-        });
-        console.log("Added od-points-layer");
+        // Now just update the data of the pre-existing sources
+        map.getSource('google-routes').setData(`/data/google_routes.geojson${cacheBuster}`);
+        map.getSource('here-routes').setData(`/data/here_routes.geojson${cacheBuster}`);
+        map.getSource('osm-routes').setData(`/data/osm_routes.geojson${cacheBuster}`);
+        map.getSource('od-points').setData(`/data/od_points.geojson${cacheBuster}`);
 
         addEventListeners();
     }

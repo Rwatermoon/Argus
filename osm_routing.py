@@ -3,7 +3,11 @@ import polyline
 from shapely.geometry import LineString
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
+import pytz
+import logging
+
+logger = logging.getLogger(__name__)
 
 OSRM_ENDPOINT = "http://router.project-osrm.org/route/v1/driving/"
 GRAPHHOPPER_ENDPOINT = "https://graphhopper.com/api/1/route"
@@ -46,10 +50,11 @@ def get_graphhopper_route(origin, destination, routing_options=None):
     """
     Get a route from GraphHopper API.
     """
+    logger.debug(f"get_graphhopper_route called with origin: {origin}, destination: {destination}")
     api_key = os.getenv("GRAPHHOPPER_API_KEY")
 
     if not api_key:
-        print("Error: GRAPHHOPPER_API_KEY not set.")
+        logger.error("GRAPHHOPPER_API_KEY not set.")
         return None, None
 
     if routing_options is None:
@@ -90,16 +95,17 @@ def get_graphhopper_route(origin, destination, routing_options=None):
             }
             return line, details
         else:
-            print(f"GraphHopper API returned no route. Response: {data}")
+            logger.warning(f"GraphHopper API returned no route. Response: {data}")
             return None, None
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching GraphHopper route: {e}")
+        logger.error(f"Error fetching GraphHopper route: {e}")
         return None, None
 
 def get_osm_route(origin, destination, routing_options=None):
     """
     Get a route from OSRM API.
     """
+    logger.debug(f"get_osm_route called with origin: {origin}, destination: {destination}")
     if routing_options is None:
         routing_options = {}
 
@@ -146,5 +152,5 @@ def get_osm_route(origin, destination, routing_options=None):
             details = {'distance': route['distance'], 'duration': route['duration'], 'instructions': list(dict.fromkeys(instructions))} # Remove duplicates
             return line, details
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching OSRM route: {e}")
+        logger.error(f"Error fetching OSRM route: {e}")
         return None, None
