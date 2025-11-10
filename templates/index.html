@@ -230,15 +230,43 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     function copyToClipboard(text, element) {
-        navigator.clipboard.writeText(text).then(() => {
-            const originalText = element.textContent;
-            element.textContent = 'Copied!';
-            setTimeout(() => {
-                element.textContent = originalText;
-            }, 1500);
-        }).catch(err => {
-            console.error('Failed to copy: ', err);
-        });
+        // Check if the modern Clipboard API is available
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = element.textContent;
+                element.textContent = 'Copied!';
+                setTimeout(() => {
+                    element.textContent = originalText;
+                }, 1500);
+            }).catch(err => {
+                console.error('Failed to copy with modern API: ', err);
+            });
+        } else {
+            // Fallback for non-secure contexts or older browsers
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            
+            // Make the textarea invisible
+            textArea.style.position = 'absolute';
+            textArea.style.left = '-9999px';
+            
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                document.execCommand('copy');
+                const originalText = element.textContent;
+                element.textContent = 'Copied!';
+                setTimeout(() => {
+                    element.textContent = originalText;
+                }, 1500);
+            } catch (err) {
+                console.error('Fallback copy failed: ', err);
+            }
+            
+            document.body.removeChild(textArea);
+        }
     }
 
     // --- Event Listeners ---
