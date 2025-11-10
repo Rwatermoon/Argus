@@ -65,7 +65,6 @@ def get_graphhopper_route(origin, destination, routing_options=None):
     weighting = 'fastest' if strategy == 'fastest' else 'shortest'
 
     params = {
-        'point': [f'{origin[1]},{origin[0]}', f'{destination[1]},{destination[0]}'],
         'vehicle': 'car',
         'instructions': 'true',
         'points_encoded': 'true',
@@ -73,9 +72,12 @@ def get_graphhopper_route(origin, destination, routing_options=None):
         'weighting': weighting,
         **routing_options
     }
+    # Manually add point parameters to ensure correct formatting
+    params['point'] = [f'{origin[1]},{origin[0]}', f'{destination[1]},{destination[0]}']
 
     try:
-        response = requests.get(GRAPHHOPPER_ENDPOINT, params=params)
+        # Use requests' ability to handle lists of parameters correctly
+        response = requests.get(GRAPHHOPPER_ENDPOINT, params=params, timeout=15)
         response.raise_for_status()
         _update_gh_usage() # Increment usage count on successful API call
         data = response.json()

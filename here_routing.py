@@ -56,4 +56,4 @@ def get_here_route(origin, destination, routing_options=None):
             return line, details
     except requests.exceptions.RequestException as e:
         print(f"Error fetching HERE route: {e}")
-        return None, None
+        return None, None # Explicitly return a tuple of Nones
