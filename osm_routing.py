@@ -47,6 +47,7 @@ def get_graphhopper_route(origin, destination, routing_options=None):
     Get a route from GraphHopper API.
     """
     api_key = os.getenv("GRAPHHOPPER_API_KEY")
+
     if not api_key:
         print("Error: GRAPHHOPPER_API_KEY not set.")
         return None, None

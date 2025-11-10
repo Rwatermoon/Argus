@@ -114,7 +114,7 @@
 
     <hr>
     <h5>Log</h5>
-    <pre id="output-log"></pre>
+    <pre id="output-log" style="background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: .25rem; height: 150px; overflow-y: scroll; padding: 10px; font-family: monospace; font-size: 0.8em;"></pre>
 </div>
 
 <div id="map-container">
@@ -335,6 +335,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const progressContainer = document.getElementById('progress-container');
         const progressBar = document.getElementById('progress-bar');
         const progressMessage = document.getElementById('progress-message');
+        const log = document.getElementById('output-log');
 
         // --- Reset and show progress bar ---
         progressContainer.style.display = 'block';
@@ -346,6 +347,7 @@ document.addEventListener('DOMContentLoaded', function() {
         progressMessage.textContent = 'Initializing...';
         compareBtn.disabled = true;
         routeSelect.disabled = true;
+        log.textContent = 'Starting route comparison...\n'; // Clear previous logs
 
         const strategy = document.getElementById('routing-strategy').value;
         const osmProvider = document.getElementById('osm-provider-select').value;
@@ -372,6 +374,9 @@ document.addEventListener('DOMContentLoaded', function() {
                             progressBar.setAttribute('aria-valuenow', progressData.progress);
                             progressMessage.textContent = progressData.message;
                         } catch (e) {
+                            // This is where non-JSON logs like "Error: GRAPHHOPPER_API_KEY not set." will be caught.
+                            log.textContent += event.data + '\n';
+                            log.scrollTop = log.scrollHeight; // Auto-scroll
                             console.log("Received non-JSON message:", event.data);
                         }
                     };
@@ -518,28 +523,36 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function loadRouteLayers() {
         console.log("Loading route layers...");
-        // Remove old layers if they exist
+        // --- Robustly remove old layers and sources before adding new ones ---
         const layers = ['google-routes-layer', 'here-routes-layer', 'osm-routes-layer', 'od-points-layer'];
         const sources = ['google-routes', 'here-routes', 'osm-routes', 'od-points'];
-        layers.forEach(layer => map.getLayer(layer) && map.removeLayer(layer));
-        sources.forEach(source => map.getSource(source) && map.removeSource(source));
         
-        map.addSource('google-routes', { type: 'geojson', data: '/data/google_routes.geojson' });
+        layers.forEach(layerId => {
+            if (map.getLayer(layerId)) map.removeLayer(layerId);
+        });
+        sources.forEach(sourceId => {
+            if (map.getSource(sourceId)) map.removeSource(sourceId);
+        });
+
+        // Add a cache-busting query parameter to ensure fresh data is loaded
+        const cacheBuster = `?v=${new Date().getTime()}`;
+
+        map.addSource('google-routes', { type: 'geojson', data: `/data/google_routes.geojson${cacheBuster}` });
         console.log("Added google-routes source");
         map.addLayer({ 'id': 'google-routes-layer', 'type': 'line', 'source': 'google-routes', 'paint': { 'line-color': '#7627F5', 'line-width': 5, 'line-opacity': 0.75 } });
         console.log("Added google-routes-layer");
 
-        map.addSource('here-routes', { type: 'geojson', data: '/data/here_routes.geojson' });
+        map.addSource('here-routes', { type: 'geojson', data: `/data/here_routes.geojson${cacheBuster}` });
         console.log("Added here-routes source");
         map.addLayer({ 'id': 'here-routes-layer', 'type': 'line', 'source': 'here-routes', 'paint': { 'line-color': '#42B8B2', 'line-width': 4, 'line-opacity': 0.75 } });
         console.log("Added here-routes-layer");
 
-        map.addSource('osm-routes', { type: 'geojson', data: '/data/osm_routes.geojson' });
+        map.addSource('osm-routes', { type: 'geojson', data: `/data/osm_routes.geojson${cacheBuster}` });
         console.log("Added osm-routes source");
         map.addLayer({ 'id': 'osm-routes-layer', 'type': 'line', 'source': 'osm-routes', 'paint': { 'line-color': '#FF9A2E', 'line-width': 3, 'line-opacity': 0.75 } });
         console.log("Added osm-routes-layer");
 
-        map.addSource('od-points', { type: 'geojson', data: '/data/od_points.geojson' });
+        map.addSource('od-points', { type: 'geojson', data: `/data/od_points.geojson${cacheBuster}` });
         console.log("Added od-points source");
         map.addLayer({
             id: 'od-points-layer',

@@ -46,9 +46,15 @@ def calculate_coverage(base_route_gdf_proj, other_route, buffer_size):
 
 def save_gdf_to_geojson(data, filename):
     """Helper function to create and save a GeoDataFrame."""
+    full_path = f"data/{filename}"
     if data:
         gdf = gpd.GeoDataFrame(data, crs="EPSG:4326", geometry='geometry')
-        gdf.to_file(f"data/{filename}", driver='GeoJSON')
+        gdf.to_file(full_path, driver='GeoJSON')
+    else:
+        # If there's no data, create an empty GeoJSON file to overwrite the old one.
+        empty_geojson = {"type": "FeatureCollection", "features": []}
+        with open(full_path, 'w') as f:
+            json.dump(empty_geojson, f)
 
 def process_routes(bbox, strategy='shortest', osm_provider='osrm'):
     """Fetch and process routes from different providers."""
