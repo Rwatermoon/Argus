@@ -103,6 +103,9 @@ def get_osm_route(origin, destination, routing_options=None):
     if routing_options is None:
         routing_options = {}
 
+    # OSRM doesn't support a 'strategy' parameter, so we remove it if it exists.
+    routing_options.pop('strategy', None)
+
     # OSRM expects coordinates as lon,lat
     origin_str = f'{origin[0]},{origin[1]}'
     destination_str = f'{destination[0]},{destination[1]}'
