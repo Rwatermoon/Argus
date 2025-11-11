@@ -6,7 +6,7 @@ from shapely.geometry import LineString, Point
 from concurrent.futures import ThreadPoolExecutor
 from google_routing import get_google_route
 from here_routing import get_here_route
-from osm_routing import get_osm_route, get_graphhopper_route
+from osm_routing import get_osm_route, get_graphhopper_route, snap_to_road_osrm
 from logger_config import setup_logger
 import logging
 
@@ -147,7 +147,11 @@ def process_routes(bbox, strategy='shortest', osm_provider='osrm'):
     origins = []
     destinations = []
     while len(origins) < NUM_ROUTES:
-        origin, dest = generate_random_points_in_bbox(bbox, 2)
+        # Generate a random origin and destination
+        raw_origin, raw_dest = generate_random_points_in_bbox(bbox, 2)
+        # Snap them to the nearest road to ensure they are routable
+        origin = snap_to_road_osrm(raw_origin)
+        dest = snap_to_road_osrm(raw_dest)
         origins.append(origin)
         destinations.append(dest)
 

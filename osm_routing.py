@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 OSRM_ENDPOINT = "http://router.project-osrm.org/route/v1/driving/"
 GRAPHHOPPER_ENDPOINT = "https://graphhopper.com/api/1/route"
+OSRM_NEAREST_ENDPOINT = "http://router.project-osrm.org/nearest/v1/driving/"
 USAGE_FILE = 'graphhopper_usage.json'
 
 def _update_gh_usage():
@@ -156,3 +157,23 @@ def get_osm_route(origin, destination, routing_options=None):
     except requests.exceptions.RequestException as e:
         logger.error(f"Error fetching OSRM route: {e}")
         return None, None
+
+def snap_to_road_osrm(point):
+    """
+    Snaps a single point (lon, lat) to the nearest road using the OSRM nearest service.
+    Returns the snapped (lon, lat) tuple, or the original point if snapping fails.
+    """
+    lon, lat = point
+    url = f"{OSRM_NEAREST_ENDPOINT}{lon},{lat}"
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        if data.get('code') == 'Ok' and data.get('waypoints'):
+            snapped_location = data['waypoints'][0]['location']
+            logger.debug(f"Snapped point {point} to {tuple(snapped_location)}")
+            return tuple(snapped_location) # returns (lon, lat)
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Could not snap point {point} to road: {e}. Using original point.")
+    
+    return point # Fallback to original point
