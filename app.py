@@ -6,7 +6,7 @@ from datetime import datetime
 from flask import Flask, render_template, send_from_directory, Response, request, jsonify
 from dotenv import load_dotenv
 from osm_routing import get_graphhopper_usage
-from gemini_client import stream_gemini_evaluation
+from gemini_client import stream_gemini_evaluation, stream_openai_compatible_evaluation
 from data_processing import calculate_single_route_comparison
 
 load_dotenv()
@@ -103,6 +103,7 @@ def evaluate_with_ai():
     data = request.get_json()
     user_prompt = data.get('prompt')
     route_id = data.get('route_id')
+    ai_provider = data.get('ai_provider', 'deepseek') # Default to deepseek
 
     if not user_prompt or route_id is None:
         return jsonify({"status": "error", "output": "Prompt or route_id missing."}), 400
@@ -115,8 +116,12 @@ def evaluate_with_ai():
         if not route_stats:
             return jsonify({"status": "error", "output": f"No data found for route ID {route_id}."}), 404
 
-        # Set the generator that the /ai-stream endpoint will use
-        ai_stream_generator = stream_gemini_evaluation(route_stats, user_prompt)
+        # Choose the correct generator based on the provider
+        if ai_provider == 'gemini':
+            ai_stream_generator = stream_gemini_evaluation(route_stats, user_prompt)
+        else:
+            ai_stream_generator = stream_openai_compatible_evaluation(ai_provider, route_stats, user_prompt)
+            
         return jsonify({"status": "success"})
 
     except (FileNotFoundError, json.JSONDecodeError):

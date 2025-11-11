@@ -105,7 +105,7 @@
     </div>
 
     <div id="random-controls">
-        <button id="compare-btn" class="btn btn-primary w-100 mb-3">Compare Routes</button>
+        <button id="compare-btn" class="btn btn-dark w-100 mb-3">Compare Routes</button>
     </div>
     <div id="places-controls" style="display: none;">
         <button id="compare-places-btn" class="btn btn-info w-100 mb-3">Compare POI Routes</button>
@@ -182,9 +182,16 @@
             <div id="graphhopper-usage-display" class="mt-2 text-muted" style="font-size: 0.8em;"></div>
         </div>
         <div class="tab-pane fade" id="ai-eval-content" role="tabpanel">
-            <div class="input-group">
-                <input type="text" id="ai-prompt-input" class="form-control" placeholder="e.g., 'Which route is best for a large truck?' or 'Compare the complexity of the routes.'">
-                <button class="btn btn-success" type="button" id="ai-submit-btn">Ask AI</button>
+            <div class="d-flex">
+                <div class="input-group">
+                    <input type="text" id="ai-prompt-input" class="form-control" placeholder="e.g., 'Which route is best for a large truck?'">
+                    <button class="btn btn-success" type="button" id="ai-submit-btn">Ask AI</button>
+                </div>
+                <select id="ai-provider-select" class="form-select ms-2" style="width: 150px;">
+                    <option value="deepseek" selected>DeepSeek</option>
+                    <option value="chatgpt" style="display: none;">ChatGPT</option>
+                    <option value="gemini">Gemini</option>
+                </select>
             </div>
             <div id="ai-response-area" class="mt-3 p-3 bg-light rounded" style="min-height: 100px; white-space: pre-wrap; font-family: sans-serif;">
                 Select a route pair and enter a prompt to get an AI evaluation.
@@ -506,6 +513,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const promptInput = document.getElementById('ai-prompt-input');
         const userPrompt = promptInput.value.trim();
         const routeId = document.getElementById('route-select').value;
+        const aiProvider = document.getElementById('ai-provider-select').value;
         const responseArea = document.getElementById('ai-response-area');
         const submitBtn = document.getElementById('ai-submit-btn');
 
@@ -525,7 +533,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/evaluate-with-ai', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: userPrompt, route_id: routeId })
+            body: JSON.stringify({ prompt: userPrompt, route_id: routeId, ai_provider: aiProvider })
         })
         .then(response => response.json())
         .then(data => {
