@@ -6,6 +6,7 @@ from datetime import datetime
 from flask import Flask, render_template, send_from_directory, Response, request, jsonify
 from dotenv import load_dotenv
 from osm_routing import get_graphhopper_usage
+from gemini_client import stream_gemini_evaluation
 from data_processing import calculate_single_route_comparison
 
 load_dotenv()
@@ -18,6 +19,7 @@ HERE_API_KEY = os.getenv("HERE_MAP_DATA_API_KEY")
 MAPBOX_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN")
 
 process = None
+ai_stream_generator = None
 
 @app.route('/')
 def index():
@@ -92,6 +94,36 @@ def calculate_single():
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     return jsonify({"status": "success"})
 
+@app.route('/evaluate-with-ai', methods=['POST'])
+def evaluate_with_ai():
+    """
+    Starts a streaming AI evaluation for a given route pair.
+    """
+    global ai_stream_generator
+    data = request.get_json()
+    user_prompt = data.get('prompt')
+    route_id = data.get('route_id')
+
+    if not user_prompt or route_id is None:
+        return jsonify({"status": "error", "output": "Prompt or route_id missing."}), 400
+
+    try:
+        with open('data/stats.json', 'r') as f:
+            all_stats = json.load(f)
+        
+        route_stats = all_stats.get(str(route_id))
+        if not route_stats:
+            return jsonify({"status": "error", "output": f"No data found for route ID {route_id}."}), 404
+
+        # Set the generator that the /ai-stream endpoint will use
+        ai_stream_generator = stream_gemini_evaluation(route_stats, user_prompt)
+        return jsonify({"status": "success"})
+
+    except (FileNotFoundError, json.JSONDecodeError):
+        return jsonify({"status": "error", "output": "Statistics data not found. Please run a comparison first."}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "output": str(e)}), 500
+
 @app.route('/progress')
 def progress():
     """Stream the output of the data processing script."""
@@ -108,6 +140,20 @@ def progress():
         process = None
 
     return Response(generate(), mimetype='text/event-stream')
+
+@app.route('/ai-stream')
+def ai_stream():
+    """Streams the AI evaluation response."""
+    def generate_ai_response():
+        global ai_stream_generator
+        if not ai_stream_generator:
+            return
+        
+        for chunk in ai_stream_generator:
+            yield f"data: {json.dumps({'text': chunk})}\n\n"
+        ai_stream_generator = None # Clear after use
+
+    return Response(generate_ai_response(), mimetype='text/event-stream')
 
 @app.route('/graphhopper-usage')
 def graphhopper_usage():
