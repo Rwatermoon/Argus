@@ -5,7 +5,7 @@ import numpy as np
 from shapely.geometry import LineString, Point
 from concurrent.futures import ThreadPoolExecutor
 from google_routing import get_google_route
-from here_routing import get_here_route
+from here_routing import get_here_route, snap_to_road_here
 from osm_routing import get_osm_route, get_graphhopper_route, snap_to_road_osrm
 from logger_config import setup_logger
 import logging
@@ -13,6 +13,7 @@ import logging
 # Default Bounding box for Stuttgart-Weilimdorf
 BBOX = (9.10, 48.78, 9.20, 48.88) # min_lon, min_lat, max_lon, max_lat
 NUM_ROUTES = 5
+MIN_ROUTE_DISTANCE_KM = 2.0 # Minimum distance in km for a valid OD pair
 BUFFER_METERS = 30 # Buffer size in meters for overlap calculation
 
 # Use a projected CRS for accurate length calculations (UTM zone 32N for Stuttgart)
@@ -35,6 +36,20 @@ def generate_random_points_in_bbox(bbox, num_points):
     lons = np.random.uniform(min_lon, max_lon, num_points)
     lats = np.random.uniform(min_lat, max_lat, num_points)
     return list(zip(lons, lats))
+
+def haversine_distance(p1, p2):
+    """Calculate the distance between two (lon, lat) points in kilometers."""
+    lon1, lat1 = p1
+    lon2, lat2 = p2
+    R = 6371  # Earth radius in kilometers
+
+    dlat = np.radians(lat2 - lat1)
+    dlon = np.radians(lon2 - lon1)
+    a = (np.sin(dlat / 2) * np.sin(dlat / 2) +
+         np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) *
+         np.sin(dlon / 2) * np.sin(dlon / 2))
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    return R * c
 
 def log_progress(current, total, message):
     """Logs progress as a JSON object for the frontend to parse."""
@@ -133,27 +148,32 @@ def calculate_single_route_comparison(origin, destination, strategy, osm_provide
     logging.debug("Finished calculating single route comparison.")
     return final_results
 
-def process_routes(bbox, strategy='shortest', osm_provider='osrm'):
+def process_routes(bbox, strategy='shortest', osm_provider='osrm', origins_override=None, dests_override=None):
     """Fetch and process routes from different providers."""
     # Total steps: 1 for setup, NUM_ROUTES for processing, 1 for saving
     total_steps = NUM_ROUTES + 2
 
     log_progress(0, total_steps, f"Initializing... Strategy: {strategy}, OSM Provider: {osm_provider}")
 
-    # Step 1: Generate points
-    log_progress(1, total_steps, f"Generating {NUM_ROUTES} random origin/destination pairs...")
+    if origins_override and dests_override:
+        origins = origins_override
+        destinations = dests_override
+        log_progress(1, total_steps, f"Using {len(origins)} pre-defined OD pairs...")
+    else:
+        # Step 1: Generate points
+        log_progress(1, total_steps, f"Generating {NUM_ROUTES} random origin/destination pairs...")
 
-    # Ensure the origin and destination are not the same
-    origins = []
-    destinations = []
-    while len(origins) < NUM_ROUTES:
-        # Generate a random origin and destination
-        raw_origin, raw_dest = generate_random_points_in_bbox(bbox, 2)
-        # Snap them to the nearest road to ensure they are routable
-        origin = snap_to_road_osrm(raw_origin)
-        dest = snap_to_road_osrm(raw_dest)
-        origins.append(origin)
-        destinations.append(dest)
+        # Ensure the origin and destination are not the same
+        origins = []
+        destinations = []
+        while len(origins) < NUM_ROUTES:
+            # Generate a random origin and destination
+            raw_origin, raw_dest = generate_random_points_in_bbox(bbox, 2)
+            # Snap them to the nearest road to ensure they are routable
+            origin = snap_to_road_osrm(raw_origin)
+            dest = snap_to_road_osrm(raw_dest)
+            origins.append(origin)
+            destinations.append(dest)
 
     google_routes = []
     here_routes = []
@@ -235,6 +255,8 @@ def process_routes(bbox, strategy='shortest', osm_provider='osrm'):
 
 if __name__ == '__main__':
     import os
+    import random
+    from google_places_client import search_pois_in_bbox
     logging.debug(f"data_processing.py script started with args: {sys.argv}")
 
     if not os.path.exists('data'):
@@ -276,6 +298,76 @@ if __name__ == '__main__':
         log_progress(100, 100, "Manual calculation complete!")
         logging.debug(f"Sending manual_result to frontend. OSM routes count: {len(results['osm_routes'])}")
         print(json.dumps({"type": "manual_result", "data": results}, cls=GeoJSONEncoder, separators=(',', ':')), flush=True)
+
+    # Mode 3: Google Places POIs (8 args: script, --places, lon1, lat1, lon2, lat2, strategy, osm_provider)
+    elif len(sys.argv) == 8 and sys.argv[1] == '--places':
+        logging.info("Running in Google Places POI mode.")
+        try:
+            current_bbox = tuple(map(float, sys.argv[2:6]))
+        except ValueError:
+            logging.error("Invalid BBOX arguments. Using default.")
+            current_bbox = BBOX
+        strategy = sys.argv[6]
+        osm_provider = sys.argv[7]
+
+        log_progress(10, 100, "Fetching POIs from Google Places...")
+        pois = search_pois_in_bbox(current_bbox, limit=50)
+
+        if len(pois) < 2:
+            logging.error("Not enough Google Places POIs found to generate routes.")
+            sys.exit(1)
+
+        log_progress(30, 100, f"Generating {NUM_ROUTES} valid OD pairs from {len(pois)} POIs...")
+        origins_pois, dests_pois = [], []
+        attempts = 0
+        while len(origins_pois) < NUM_ROUTES and attempts < 100:
+            o_poi, d_poi = random.sample(pois, 2)
+            o_coords = (o_poi['geometry']['location']['lng'], o_poi['geometry']['location']['lat'])
+            d_coords = (d_poi['geometry']['location']['lng'], d_poi['geometry']['location']['lat'])
+
+            if haversine_distance(o_coords, d_coords) >= MIN_ROUTE_DISTANCE_KM:
+                origins_pois.append(o_poi)
+                dests_pois.append(d_poi)
+            attempts += 1
+        
+        if not origins_pois:
+            logging.error("Could not generate any valid POI pairs meeting the distance requirement.")
+            sys.exit(1)
+
+        # Use the coordinates of the selected POIs for routing
+        origins = [(p['geometry']['location']['lng'], p['geometry']['location']['lat']) for p in origins_pois]
+        dests = [(p['geometry']['location']['lng'], p['geometry']['location']['lat']) for p in dests_pois]
+
+        # Re-use the random mode's processing logic, but with POI-based points
+        google_routes, here_routes, osm_routes, od_points, stats = process_routes(current_bbox, strategy, osm_provider, origins_override=origins, dests_override=dests)
+        # Save all results
+        save_gdf_to_geojson(google_routes, "google_routes.geojson")
+        save_gdf_to_geojson(here_routes, "here_routes.geojson")
+        save_gdf_to_geojson(osm_routes, "osm_routes.geojson")
+        if od_points:
+            od_gdf = gpd.GeoDataFrame(od_points, crs="EPSG:4326", geometry='geometry')
+            od_gdf.to_file("data/od_points.geojson", driver='GeoJSON')
+        
+        # Also save the POI data for the frontend to display
+        poi_data_for_frontend = []
+        # We need to handle both origin and destination POIs
+        all_pois = origins_pois + dests_pois
+        # Use a dictionary to keep track of unique POIs by their ID
+        unique_pois = {p['place_id']: p for p in all_pois}
+        for i, poi in enumerate(unique_pois.values()):
+            poi_data_for_frontend.append({
+                'id': i + 1,
+                'name': poi.get('name', 'N/A'),
+                'types': poi.get('types', []),
+                'coords': (poi['geometry']['location']['lng'], poi['geometry']['location']['lat'])
+            })
+        with open("data/pois.json", "w") as f:
+            json.dump(poi_data_for_frontend, f)
+
+        with open("data/stats.json", "w") as f:
+            json.dump(stats, f, cls=GeoJSONEncoder)
+
+        log_progress(100, 100, "Comparison complete! You can now view the results.")
 
     else:
         logging.error(f"Invalid arguments. Received {len(sys.argv)} arguments: {sys.argv}")

@@ -48,6 +48,25 @@ def compare():
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     return {"status": "success"}
 
+@app.route('/compare-places', methods=['POST'])
+def compare_places():
+    """Run the data processing script using Google Places POIs."""
+    global process
+    if process and process.poll() is None:
+        return {"status": "error", "output": "A comparison is already in progress."}
+
+    data = request.get_json()
+    bbox = data.get('bbox')
+    strategy = data.get('strategy', 'shortest')
+    osm_provider = data.get('osm_provider', 'osrm')
+
+    if not bbox or len(bbox) != 4:
+        return {"status": "error", "output": "Invalid BBOX provided."}
+
+    cmd = ['python', '-u', 'data_processing.py', '--places', *map(str, bbox), strategy, osm_provider]
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    return {"status": "success"}
+
 @app.route('/calculate-single-route', methods=['POST'])
 def calculate_single():
     """Calculate and return a single route comparison."""
